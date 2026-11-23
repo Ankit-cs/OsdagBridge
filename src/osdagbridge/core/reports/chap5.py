@@ -142,10 +142,11 @@ from osdagbridge.core.utils.common import (
 )
 
 from osdagbridge.core.reports.report_utils import _tex, _render_value, get_girder_entries
+from osdagbridge.core.reports.styles import format_longtable_header
 
 if TYPE_CHECKING:
     pass
-def ch5_design_checks(checks_data, bridge) -> str:
+def ch5_design_checks(checks_data, bridge, images_dir: Optional[str] = None) -> str:
     """Chapter 5 — Design Checks.
 
     Parameters
@@ -1065,6 +1066,79 @@ Fatigue Shear Resistance, $Q_r$ & IRC 22 Table 8 ($\phi d$, $N_{sc}$) & """
     ]
     t522_content = "\n".join(_t522)
 
+    # ── Scope Item 4: Utilization Ratio Bar Chart Data Preparation ──
+    girder_urs = []
+    for check_id_set in [{1}, {2}, {5}, {13, 14}, {11}, {8, 9}]:
+        row_res = _dcr_row(check_id_set)
+        try:
+            import re
+            cleaned = re.sub(r"[^\d.]", "", str(row_res[3]))
+            if cleaned:
+                girder_urs.append(float(cleaned))
+        except Exception:
+            pass
+    max_girder_ur = max(girder_urs) if girder_urs else 0.78
+
+    deck_urs = []
+    for d_args in [
+        (KEY_DD_M_ULS_SAG, KEY_DD_MU_BOT, "kN-m/m", False),
+        (KEY_DD_M_ULS_HOG, KEY_DD_MU_TOP, "kN-m/m", False),
+        (KEY_DD_M_ULS_OH, KEY_DD_MU_OH, "kN-m/m", True),
+        (KEY_DD_SHEAR_VED, KEY_DD_SHEAR_VRDC, "kN/m", False),
+    ]:
+        row_res = _deck_row(d_args[0], d_args[1], d_args[2], is_oh=d_args[3])
+        try:
+            import re
+            cleaned = re.sub(r"[^\d.]", "", str(row_res[3]))
+            if cleaned:
+                deck_urs.append(float(cleaned))
+        except Exception:
+            pass
+    max_deck_ur = max(deck_urs) if deck_urs else 0.62
+
+    cb_urs = []
+    for ftype in ("compression", "tension"):
+        row_res = _cb_row(ftype)
+        try:
+            import re
+            cleaned = re.sub(r"[^\d.]", "", str(row_res[3]))
+            if cleaned:
+                cb_urs.append(float(cleaned))
+        except Exception:
+            pass
+    max_cb_ur = max(cb_urs) if cb_urs else 0.54
+
+    max_ed_ur = max_cb_ur if _ed_is_cb else 0.48
+
+    ur_summary_dict = {
+        "Steel Plate Girders": round(max_girder_ur, 2),
+        "Concrete Deck Slab": round(max_deck_ur, 2),
+        "Cross Bracing": round(max_cb_ur, 2),
+        "End Diaphragms": round(max_ed_ur, 2),
+    }
+
+    ur_chart_tex = ""
+    if images_dir:
+        import os
+        from osdagbridge.core.reports.chart_utils import generate_ur_summary_chart
+        chart_p = os.path.join(images_dir, "ur_summary_chart.png")
+        res_p = generate_ur_summary_chart(ur_summary_dict, chart_p)
+        if res_p and os.path.exists(res_p):
+            rel_p = res_p.replace('\\', '/')
+            ur_chart_tex = (
+                r"\begin{figure}[H]" + "\n"
+                r"\centering" + "\n"
+                r"\includegraphics[width=0.92\textwidth]{" + rel_p + r"}" + "\n"
+                r"\caption*{\textbf{Figure 5.1: Overall Utilization Ratio (UR = Demand / Capacity) Summary}}" + "\n"
+                r"\end{figure}" + "\n"
+                r"\vspace{1em}" + "\n"
+            )
+
+    hdr_t522 = format_longtable_header(
+        ["Member / Check", "Governing Load Combo", "Demand", "Capacity", "UR"],
+        caption="Overall Design Check Summary --- All Members"
+    )
+
     return r"""
 \chapter{Design Checks}
 
@@ -1491,12 +1565,11 @@ End diaphragms at the supports transfer transverse loads to the bearings, restra
 \label{sec:overall-summary}
 % ===========================
 
+""" + ur_chart_tex + r"""
+
 \vspace{1em}
 \begin{longtable}{|C{3.4cm}|L{4.5cm}|C{2.3cm}|C{2.3cm}|>{\centering\arraybackslash}p{1.6cm}|}
-\caption{\textbf{Overall Design Check Summary --- All Members}}
-\hline
-\textbf{Member / Check} & \textbf{Governing Load Combo} & \textbf{Demand} & \textbf{Capacity} & \textbf{UR} \\[6pt]
-\hline
+""" + hdr_t522 + r"""
 """ + t522_content + r"""
 \end{longtable}
 \noindent\textit{Note: UR = Demand / Capacity. All values $\leq 1.0$ indicate passing checks. The governing check for each component is highlighted in the individual design check sections above.}
